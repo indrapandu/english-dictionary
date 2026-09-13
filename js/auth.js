@@ -2,19 +2,12 @@
     "use strict";
 
     const config = window.APP_CONFIG || {};
-    const isConfigured = Boolean(
-        config.supabaseUrl &&
-        config.supabaseKey &&
-        !config.supabaseUrl.startsWith("YOUR_") &&
-        !config.supabaseKey.startsWith("YOUR_")
-    );
-
-    const client = isConfigured && window.supabase?.createClient
+    const unavailableMessage = "Unable to connect. Refresh the page and try again.";
+    const client = config.supabaseUrl && config.supabaseKey && window.supabase?.createClient
         ? window.supabase.createClient(config.supabaseUrl, config.supabaseKey)
         : null;
 
     async function requireAuth() {
-        if (!isConfigured) return { preview: true, user: null };
         if (!client) {
             window.location.replace("login.html");
             return null;
@@ -26,14 +19,11 @@
             return null;
         }
 
-        return { preview: false, user: data.session.user };
+        return { user: data.session.user };
     }
 
     async function signIn(email, password) {
-        if (!isConfigured) {
-            throw new Error("Supabase has not been configured yet. Update js/config.js first.");
-        }
-        if (!client) throw new Error("The sign-in service could not load. Check your connection and refresh this page.");
+        if (!client) throw new Error(unavailableMessage);
 
         const { data, error } = await client.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -58,10 +48,9 @@
                 window.location.replace("index.html");
                 return;
             }
-        } else if (isConfigured) {
-            message.textContent = "The sign-in service could not load. Check your connection and refresh this page.";
         } else {
-            message.textContent = "Setup required: add your Supabase Project URL and publishable key in js/config.js.";
+            message.textContent = unavailableMessage;
+            button.disabled = true;
         }
 
         form.addEventListener("submit", async (event) => {
@@ -87,7 +76,6 @@
 
     window.DictionaryAuth = {
         client,
-        isConfigured,
         requireAuth,
         signOut
     };

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#315c4f">
     <meta name="description" content="A personal English dictionary for learning vocabulary.">
     <title>My Dictionary</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=20260913-2">
 </head>
 <body class="app-page">
     <noscript>This application requires JavaScript.</noscript>
@@ -15,10 +15,7 @@
         <aside class="sidebar" aria-label="Dictionary navigation">
             <a class="brand" href="index.html" aria-label="My Dictionary home">
                 <span class="brand-mark">M</span>
-                <span>
-                    <strong>My Dictionary</strong>
-                    <small>Build your vocabulary</small>
-                </span>
+                <strong>My Dictionary</strong>
             </a>
 
             <nav class="filter-nav" aria-label="Word filters">
@@ -34,20 +31,23 @@
                 <button class="nav-item" type="button" data-filter="Learning">
                     <span>Learning</span><span class="nav-count" id="countLearning">0</span>
                 </button>
+                <button class="nav-item" type="button" data-filter="Familiar">
+                    <span>Familiar</span><span class="nav-count" id="countFamiliar">0</span>
+                </button>
                 <button class="nav-item" type="button" data-filter="Mastered">
                     <span>Mastered</span><span class="nav-count" id="countMastered">0</span>
                 </button>
             </nav>
 
             <div class="sidebar-footer">
-                <span class="user-pill" id="userEmail">Loading...</span>
+                <span class="user-pill" id="userEmail"></span>
                 <button class="text-button" id="logoutButton" type="button">Log out</button>
             </div>
         </aside>
 
         <main class="main-content">
             <header class="mobile-header">
-                <a class="brand compact" href="index.html">
+                <a class="brand" href="index.html">
                     <span class="brand-mark">M</span>
                     <strong>My Dictionary</strong>
                 </a>
@@ -55,26 +55,17 @@
             </header>
 
             <section class="page-heading">
-                <div>
-                    <p class="eyebrow">Personal vocabulary</p>
-                    <h1>Your words, remembered.</h1>
-                    <p>Save meanings and examples you can actually use.</p>
-                </div>
-                <button class="primary-button" id="addWordButton" type="button">
+                <h1>Words</h1>
+                <button class="primary-button" id="addWordButton" type="button" disabled>
                     <span aria-hidden="true">+</span> Add word
                 </button>
             </section>
-
-            <div class="setup-banner" id="setupBanner" role="status" hidden>
-                <strong>Frontend preview</strong>
-                <span>Connect Supabase in <code>js/config.js</code> to enable login and save your own words.</span>
-            </div>
 
             <section class="toolbar" aria-label="Search and mobile filters">
                 <label class="search-box">
                     <span class="visually-hidden">Search vocabulary</span>
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
-                    <input id="searchInput" type="search" placeholder="Search word, meaning, or note..." autocomplete="off">
+                    <input id="searchInput" type="search" placeholder="Search words or meanings" autocomplete="off">
                 </label>
                 <label class="mobile-filter">
                     <span class="visually-hidden">Filter words</span>
@@ -83,12 +74,13 @@
                         <option value="favorite">Favorites</option>
                         <option value="New">New</option>
                         <option value="Learning">Learning</option>
+                        <option value="Familiar">Familiar</option>
                         <option value="Mastered">Mastered</option>
                     </select>
                 </label>
             </section>
 
-            <section class="dictionary-layout">
+            <section class="dictionary-layout" id="dictionaryLayout">
                 <div class="word-list-panel">
                     <div class="panel-heading">
                         <h2 id="listTitle">All words</h2>
@@ -101,26 +93,22 @@
                     <div class="empty-state">
                         <span class="empty-icon">Aa</span>
                         <h2>Select a word</h2>
-                        <p>Its meanings, notes, and examples will appear here.</p>
                     </div>
                 </aside>
             </section>
         </main>
     </div>
 
-    <dialog class="word-dialog" id="wordDialog">
+    <dialog class="word-dialog" id="wordDialog" aria-labelledby="dialogTitle">
         <form id="wordForm">
             <div class="dialog-heading">
-                <div>
-                    <p class="eyebrow">Vocabulary entry</p>
-                    <h2 id="dialogTitle">Add a new word</h2>
-                </div>
+                <h2 id="dialogTitle">Add word</h2>
                 <button class="icon-button" id="closeDialogButton" type="button" aria-label="Close">&times;</button>
             </div>
 
             <div class="form-grid">
                 <label class="field span-2">
-                    <span>English word or phrase *</span>
+                    <span>Word or phrase *</span>
                     <input id="wordInput" name="word" type="text" required maxlength="120" placeholder="e.g. cumbersome">
                 </label>
                 <label class="field">
@@ -144,13 +132,13 @@
                     <span>Pronunciation</span>
                     <input id="pronunciationInput" name="pronunciation" type="text" maxlength="120" placeholder="e.g. /ˈkʌmbəsəm/">
                 </label>
-                <label class="field span-2">
-                    <span>Meaning in English *</span>
-                    <textarea id="meaningEnInput" name="meaning_en" required rows="3" placeholder="Write a clear English definition"></textarea>
+                <label class="field">
+                    <span>English meaning *</span>
+                    <textarea id="meaningEnInput" name="meaning_en" required rows="3"></textarea>
                 </label>
-                <label class="field span-2">
-                    <span>Arti dalam Bahasa Indonesia</span>
-                    <textarea id="meaningIdInput" name="meaning_id" rows="3" placeholder="Tuliskan artinya dalam Bahasa Indonesia"></textarea>
+                <label class="field">
+                    <span>Bahasa Indonesia</span>
+                    <textarea id="meaningIdInput" name="meaning_id" rows="3"></textarea>
                 </label>
                 <label class="field">
                     <span>Learning status</span>
@@ -163,20 +151,17 @@
                 </label>
                 <label class="check-field">
                     <input id="favoriteInput" name="favorite" type="checkbox">
-                    <span>Add to favorites</span>
+                    <span>Favorite</span>
                 </label>
                 <label class="field span-2">
                     <span>Notes</span>
-                    <textarea id="notesInput" name="notes" rows="2" placeholder="Usage tips, synonyms, or anything useful"></textarea>
+                    <textarea id="notesInput" name="notes" rows="2"></textarea>
                 </label>
             </div>
 
             <div class="examples-section">
                 <div class="section-heading">
-                    <div>
-                        <h3>Example sentences</h3>
-                        <p>Add one or more examples to remember the word in context.</p>
-                    </div>
+                    <h3>Examples</h3>
                     <button class="secondary-button small" id="addExampleButton" type="button">+ Add example</button>
                 </div>
                 <div id="examplesEditor"></div>
@@ -194,7 +179,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js" integrity="sha384-iLddHTLokph6Omwoyid4XKxHaWa6w41BnoEj0q5oOrzmYPpHIKt1wyjReA7s//pP" crossorigin="anonymous"></script>
     <script src="js/config.js"></script>
-    <script src="js/auth.js"></script>
-    <script src="js/dictionary.js"></script>
+    <script src="js/auth.js?v=20260913-2"></script>
+    <script src="js/dictionary.js?v=20260913-2"></script>
 </body>
 </html>

@@ -11,6 +11,7 @@ A simple personal English dictionary web application for mobile and desktop brow
 - Multiple example sentences and translations
 - Notes, favorites, search, and mastery status
 - Responsive layout for phone and desktop
+- Full-height word list and detail panels, with a dedicated detail view on mobile
 
 ## Technology
 
@@ -22,12 +23,12 @@ A simple personal English dictionary web application for mobile and desktop brow
 
 - App: [My Dictionary](https://indrapandu.github.io/english-dictionary/)
 - Supabase project: `english-dictionary` (`cptrggleymlhngejnkig`)
-- `js/config.js` contains the Project URL and public publishable key. Preview mode is no longer active.
+- `js/config.js` contains the Project URL and public publishable key. Every dictionary session requires login; demo data and the preview code path have been removed.
 - `public.words` and `public.word_examples` are created, with ownership policies for each operation.
 - Database migration `20260913052727_initialize_dictionary` has been applied. `supabase/schema.sql` is its source SQL.
 - `save_word` saves a word and all examples in one transaction. A failed example save rolls back the whole change.
 - Supabase JavaScript is pinned to `2.116.0` with an integrity hash.
-- No login account exists yet. Email/password login is enabled. Public signups are still enabled in the backend and need to be disabled below; hiding registration on the website does not disable the API.
+- Email/password login is enabled. Complete the account setup below if needed, and disable public signups in the dashboard. Hiding registration on the website does not disable the API.
 
 ## Finish your personal login
 
@@ -48,11 +49,11 @@ The browser communicates directly with the Supabase API. GitHub holds the fronte
 - Supabase security and performance advisors returned no findings after the migration.
 - Test data was rolled back. No test accounts or vocabulary records were left in the database.
 - JavaScript syntax, the pinned SDK, RPC request construction, database-error propagation, and the no-session login redirect passed checks. RPC network responses in the JavaScript checks were stubbed; database behavior was tested separately on the live project.
-- Automated browser testing was unavailable because the browser download timed out. Mobile/desktop interaction should be checked with the first real account.
+- HTML IDs, local asset references, and JavaScript syntax are checked after the interface cleanup. Authenticated mobile/desktop interactions still need a check with your own account.
 
 To repeat database verification, run the **entire** `tests/supabase_rls.sql` file as `postgres` in SQL Editor. It uses temporary test fixtures within a transaction and ends with `ROLLBACK`.
 
-Real email/password login and saving through the deployed site still need the first account created above.
+Check email/password login and saving through the deployed site with your own account.
 
 ## GitHub Pages
 
