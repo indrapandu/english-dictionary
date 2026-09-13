@@ -131,6 +131,7 @@
         const { data, error } = await window.DictionaryAuth.client
             .from("words")
             .select("*, word_examples(id, sentence, translation, notes, created_at)")
+            .eq("user_id", state.user.id)
             .order("word", { ascending: true });
 
         if (error) {
@@ -139,7 +140,10 @@
             return;
         }
 
-        state.words = data || [];
+        state.words = (data || []).map((word) => ({
+            ...word,
+            word_examples: (word.word_examples || []).sort((a, b) => a.id - b.id)
+        }));
     }
 
     function setListLoading() {
@@ -351,6 +355,9 @@
             .filter((example) => example.sentence);
 
         try {
+            if (!wordRecord.word || !wordRecord.meaning_en) {
+                throw new Error("Please enter a word and its English meaning.");
+            }
             if (state.preview) {
                 savePreviewWord(wordRecord, examples);
             } else {
@@ -361,7 +368,9 @@
             render();
             showToast(wasEditing ? "Word updated." : "Word saved.");
         } catch (error) {
-            elements.formMessage.textContent = error.message || "The word could not be saved.";
+            elements.formMessage.textContent = error.code === "23505"
+                ? "This word is already in your dictionary. Edit the existing entry."
+                : error.message || "The word could not be saved.";
         } finally {
             elements.saveWordButton.disabled = false;
             elements.saveWordButton.textContent = state.editingId ? "Save changes" : "Save word";
@@ -381,32 +390,13 @@
     }
 
     async function saveDatabaseWord(record, examples) {
-        const client = window.DictionaryAuth.client;
-        let wordId = state.editingId;
-
-        if (wordId) {
-            const { error } = await client.from("words").update(record).eq("id", wordId);
-            if (error) throw error;
-            const { error: deleteError } = await client.from("word_examples").delete().eq("word_id", wordId);
-            if (deleteError) throw deleteError;
-        } else {
-            const { data: sessionData } = await client.auth.getSession();
-            const { data, error } = await client
-                .from("words")
-                .insert({ ...record, user_id: sessionData.session.user.id })
-                .select("id")
-                .single();
-            if (error) throw error;
-            wordId = data.id;
-            state.selectedId = wordId;
-        }
-
-        if (examples.length) {
-            const { error } = await client.from("word_examples").insert(
-                examples.map((example) => ({ ...example, word_id: wordId }))
-            );
-            if (error) throw error;
-        }
+        const { data, error } = await window.DictionaryAuth.client.rpc("save_word", {
+            p_word_id: state.editingId,
+            p_word: record,
+            p_examples: examples
+        });
+        if (error) throw error;
+        state.selectedId = data;
     }
 
     async function toggleFavorite(item) {
