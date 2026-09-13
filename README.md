@@ -1,70 +1,75 @@
 # My English Dictionary
 
-A simple personal English dictionary web application for mobile and desktop browsers.
+A personal English learning app with three modules, designed for desktop and mobile browsers.
 
-## Features
+[Open My Dictionary](https://indrapandu.github.io/english-dictionary/)
 
-- Email and password login through Supabase
-- Add, edit, and delete words or phrases
-- English and Indonesian meanings
-- Part of speech and pronunciation
-- Multiple example sentences and translations
-- Notes, favorites, search, and mastery status
-- Responsive layout for phone and desktop
-- Full-height word list and detail panels, with a dedicated detail view on mobile
+## Modules
 
-## Technology
+| Module | Purpose | Specific fields |
+| --- | --- | --- |
+| Chunks | Learn useful combinations and reusable sentence patterns, such as `make a decision` or `Would you mind…?` | Chunk type, pattern, when to use |
+| Words | Learn individual vocabulary, such as `cumbersome` | Part of speech |
+| Phrases | Learn expressions, idioms, phrasal verbs and sayings, such as `on the same page` | Phrase type, register, when to use |
 
-- Frontend: HTML, CSS, and vanilla JavaScript
-- Hosting: GitHub Pages
-- Authentication and database: Supabase
+Every module supports English and Indonesian meanings, pronunciation, multiple example sentences with translations, notes, favorites, and New / Learning / Familiar / Mastered status.
 
-## Configuration status — 13 September 2026
+Module navigation is in the desktop sidebar and the mobile tab bar. Search, filters and counts apply to the selected module. Search includes meanings, examples and the module-specific fields. The URL remembers the module through `#chunks`, `#words` or `#phrases`; the default is Words.
 
-- App: [My Dictionary](https://indrapandu.github.io/english-dictionary/)
-- Supabase project: `english-dictionary` (`cptrggleymlhngejnkig`)
-- `js/config.js` contains the Project URL and public publishable key. Every dictionary session requires login; demo data and the preview code path have been removed.
-- `public.words` and `public.word_examples` are created, with ownership policies for each operation.
-- Database migration `20260913052727_initialize_dictionary` has been applied. `supabase/schema.sql` is its source SQL.
-- `save_word` saves a word and all examples in one transaction. A failed example save rolls back the whole change.
-- Supabase JavaScript is pinned to `2.116.0` with an integrity hash.
-- Email/password login is enabled. Complete the account setup below if needed, and disable public signups in the dashboard. Hiding registration on the website does not disable the API.
+## Architecture
 
-## Finish your personal login
+- Frontend: static HTML, CSS and vanilla JavaScript, hosted by GitHub Pages.
+- Authentication: existing Supabase email/password login.
+- Database: Supabase Postgres project `english-dictionary` (`cptrggleymlhngejnkig`).
+- `public.words` is the shared entry table. Its legacy name is retained; the `module` column separates Chunks, Words and Phrases.
+- `public.word_examples` contains child examples linked by `word_id` with cascading deletion.
+- `save_entry(p_module, p_entry_id, p_entry, p_examples)` saves an entry and all its examples in one transaction, then returns the saved record and examples. The UI updates from this confirmed response.
+- Editing preserves the entry ID and replaces its example rows atomically. The RPC checks both ownership and module before updating.
+- The original `save_word` RPC is retained as a compatibility wrapper restricted to Words.
+- A unique index on `(user_id, module, lower(word))` prevents duplicates within one module. The same text may be studied in different modules or by different users.
+- Initial data loading uses batches of 500 records. Module switching and search then operate on the user's loaded entries. There is no Realtime subscription.
 
-1. Open [Supabase Authentication > Users](https://supabase.com/dashboard/project/cptrggleymlhngejnkig/auth/users).
-2. Choose **Add user > Create new user**. Enter your own email and password and enable **Auto Confirm User** when shown, then create the account. Do not put the password in GitHub or `config.js`.
-3. In **Authentication > Sign In / Providers**, disable **Allow new users to sign up** and save. Keep the **Email** provider enabled. Administrator-created accounts can still sign in.
-4. Open [My Dictionary](https://indrapandu.github.io/english-dictionary/), log in, add a word with an example, then refresh the page to check persistence.
+Existing entries remain in Words with their original IDs, owners and examples. They are not automatically reclassified. The module expansion does not change the login provider.
 
-Account creation and the signup setting must be completed in the Supabase dashboard: the available project connection does not expose Auth user-management or Auth-settings changes. The app uses password login and does not send email invitations or password-reset messages.
+## Database setup
 
-The browser communicates directly with the Supabase API. GitHub holds the frontend source and GitHub Pages hosts it. Supabase's optional GitHub integration and automatic database deployments have not been configured.
+The following migrations are applied to the live project and recorded in `supabase/migrations/`:
+
+1. `20260913052727_initialize_dictionary.sql`
+2. `20260913072909_add_learning_modules.sql`
+
+For a **new project**, apply the migrations in order, or apply `supabase/schema.sql` once as a standalone current schema. Do not apply both paths.
+
+For the original two-table deployment, apply only the second migration. Do not rerun applied migrations. Supabase's optional GitHub integration and automatic migration deployment are not configured.
+
+## Account setup
+
+1. In [Supabase Authentication > Users](https://supabase.com/dashboard/project/cptrggleymlhngejnkig/auth/users), create your personal user with email/password and auto-confirm the email.
+2. For private use, disable **Allow new users to sign up** under Authentication settings. Hiding signup controls does not disable the signup API.
+3. Open the app and log in. You can add entries in any module.
+
+Account creation and signup settings are managed in the dashboard. Passwords and other private credentials must never be stored in this repository. `js/config.js` contains only the project URL and public publishable key. The Supabase browser SDK is pinned to `2.116.0` with an integrity hash.
 
 ## Verification
 
-- The live database passed ownership, duplicate-word, create/update/delete, example-cascade, and atomic-save rollback checks in `tests/supabase_rls.sql`.
-- Tests also confirmed that another user cannot read, edit, delete, reassign, or attach examples to someone else's word.
-- Unauthenticated REST access to both tables and the save function returned permission denied, as intended.
-- Supabase security and performance advisors returned no findings after the migration.
-- Test data was rolled back. No test accounts or vocabulary records were left in the database.
-- JavaScript syntax, the pinned SDK, RPC request construction, database-error propagation, and the no-session login redirect passed checks. RPC network responses in the JavaScript checks were stubbed; database behavior was tested separately on the live project.
-- HTML IDs, local asset references, and JavaScript syntax are checked after the interface cleanup. Authenticated mobile/desktop interactions still need a check with your own account.
+Run the frontend regression tests with Node.js 24:
 
-To repeat database verification, run the **entire** `tests/supabase_rls.sql` file as `postgres` in SQL Editor. It uses temporary test fixtures within a transaction and ends with `ROLLBACK`.
+```sh
+npm ci
+npm test
+```
 
-Check email/password login and saving through the deployed site with your own account.
+The tests use jsdom with simulated API responses. They exercise module isolation, form fields, create/edit/delete, favorites, cancellation, duplicate handling, escaping, example preservation, pagination and signed-out behavior. jsdom is a development dependency; the deployed app has no build step and does not load it.
 
-## GitHub Pages
+Run each SQL test file in its entirety as `postgres` in Supabase SQL Editor:
 
-For free hosting from a personal GitHub account, make the repository public. Then open:
+- `tests/supabase_rls.sql`: original Words behavior, ownership and anonymous denial.
+- `tests/modules_rls.sql`: three-module CRUD, category validation, duplicate scopes, atomic rollback, module guards, cross-user isolation and delete cascades.
 
-`Settings > Pages > Build and deployment > Deploy from a branch`
+Both SQL suites passed on the live project after the module migration. Fixtures and test users were rolled back. Frontend tests passed; authenticated visual testing in a real browser still requires a user session.
 
-Select branch `main`, folder `/ (root)`, and save.
+Performance advisors reported no findings. The security advisor reported one Auth setting: [leaked password protection is disabled](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection). The module migration does not change Auth settings. RLS remains enabled on both tables, and anonymous access to entries and save functions is denied.
 
-The URL is [https://indrapandu.github.io/english-dictionary/](https://indrapandu.github.io/english-dictionary/).
+## Hosting
 
-## Security
-
-Only use the Supabase Project URL and **Publishable key** in `js/config.js`. Never put a Supabase `service_role` key, database password, or other private credential in this repository. Browser-visible keys do not grant access to dictionary data without a signed-in user's session; database grants and RLS enforce ownership.
+GitHub Pages deploys `main` from the repository root. Changes to HTML, CSS and JavaScript publish through the Pages workflow. Database migrations must be applied separately before publishing frontend code that depends on them.

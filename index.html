@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#315c4f">
-    <meta name="description" content="A personal English dictionary for learning vocabulary.">
+    <meta name="description" content="A personal English dictionary for learning chunks, words, and phrases.">
     <title>My Dictionary</title>
-    <link rel="stylesheet" href="css/style.css?v=20260913-2">
+    <link rel="stylesheet" href="css/style.css?v=20260913-3">
 </head>
 <body class="app-page">
     <noscript>This application requires JavaScript.</noscript>
@@ -18,9 +18,15 @@
                 <strong>My Dictionary</strong>
             </a>
 
-            <nav class="filter-nav" aria-label="Word filters">
+            <nav class="module-nav" aria-label="Learning modules">
+                <a class="module-link" href="#chunks" data-module="chunks"><span>Chunks</span><span class="nav-count" data-module-count="chunks">0</span></a>
+                <a class="module-link active" href="#words" data-module="words" aria-current="page"><span>Words</span><span class="nav-count" data-module-count="words">0</span></a>
+                <a class="module-link" href="#phrases" data-module="phrases"><span>Phrases</span><span class="nav-count" data-module-count="phrases">0</span></a>
+            </nav>
+
+            <nav class="filter-nav" aria-label="Learning filters">
                 <button class="nav-item active" type="button" data-filter="all">
-                    <span>All words</span><span class="nav-count" id="countAll">0</span>
+                    <span id="allFilterLabel">All words</span><span class="nav-count" id="countAll">0</span>
                 </button>
                 <button class="nav-item" type="button" data-filter="favorite">
                     <span>Favorites</span><span class="nav-count" id="countFavorite">0</span>
@@ -54,23 +60,29 @@
                 <button class="text-button" id="mobileLogoutButton" type="button">Log out</button>
             </header>
 
+            <nav class="mobile-modules" aria-label="Learning modules">
+                <a class="module-link" href="#chunks" data-module="chunks">Chunks</a>
+                <a class="module-link active" href="#words" data-module="words" aria-current="page">Words</a>
+                <a class="module-link" href="#phrases" data-module="phrases">Phrases</a>
+            </nav>
+
             <section class="page-heading">
-                <h1>Words</h1>
-                <button class="primary-button" id="addWordButton" type="button" disabled>
-                    <span aria-hidden="true">+</span> Add word
+                <h1 id="moduleTitle">Words</h1>
+                <button class="primary-button" id="addEntryButton" type="button" disabled>
+                    <span aria-hidden="true">+</span><span id="addEntryLabel">Add word</span>
                 </button>
             </section>
 
             <section class="toolbar" aria-label="Search and mobile filters">
                 <label class="search-box">
-                    <span class="visually-hidden">Search vocabulary</span>
+                    <span class="visually-hidden" id="searchLabel">Search words</span>
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.35-4.35m2.35-5.15a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"/></svg>
                     <input id="searchInput" type="search" placeholder="Search words or meanings" autocomplete="off">
                 </label>
                 <label class="mobile-filter">
-                    <span class="visually-hidden">Filter words</span>
+                    <span class="visually-hidden">Filter entries</span>
                     <select id="mobileFilterSelect">
-                        <option value="all">All words</option>
+                        <option value="all" id="allFilterOption">All words</option>
                         <option value="favorite">Favorites</option>
                         <option value="New">New</option>
                         <option value="Learning">Learning</option>
@@ -81,15 +93,15 @@
             </section>
 
             <section class="dictionary-layout" id="dictionaryLayout">
-                <div class="word-list-panel">
+                <div class="entry-list-panel">
                     <div class="panel-heading">
                         <h2 id="listTitle">All words</h2>
                         <span id="resultCount">0 words</span>
                     </div>
-                    <div class="word-list" id="wordList" aria-live="polite"></div>
+                    <div class="entry-list" id="entryList" aria-live="polite"></div>
                 </div>
 
-                <aside class="word-detail" id="wordDetail" aria-live="polite">
+                <aside class="entry-detail" id="entryDetail" aria-live="polite">
                     <div class="empty-state">
                         <span class="empty-icon">Aa</span>
                         <h2>Select a word</h2>
@@ -99,19 +111,20 @@
         </main>
     </div>
 
-    <dialog class="word-dialog" id="wordDialog" aria-labelledby="dialogTitle">
-        <form id="wordForm">
+    <dialog class="entry-dialog" id="entryDialog" aria-labelledby="dialogTitle">
+        <form id="entryForm">
             <div class="dialog-heading">
                 <h2 id="dialogTitle">Add word</h2>
                 <button class="icon-button" id="closeDialogButton" type="button" aria-label="Close">&times;</button>
             </div>
 
+            <fieldset id="entryFields">
             <div class="form-grid">
                 <label class="field span-2">
-                    <span>Word or phrase *</span>
-                    <input id="wordInput" name="word" type="text" required maxlength="120" placeholder="e.g. cumbersome">
+                    <span id="entryInputLabel">Word *</span>
+                    <input id="entryInput" name="word" type="text" required maxlength="120" placeholder="e.g. cumbersome">
                 </label>
-                <label class="field">
+                <label class="field" id="partOfSpeechField">
                     <span>Part of speech</span>
                     <select id="partOfSpeechInput" name="part_of_speech">
                         <option value="">Select...</option>
@@ -123,10 +136,11 @@
                         <option>Preposition</option>
                         <option>Conjunction</option>
                         <option>Interjection</option>
-                        <option>Phrase</option>
-                        <option>Idiom</option>
-                        <option>Phrasal verb</option>
                     </select>
+                </label>
+                <label class="field" id="expressionTypeField" hidden>
+                    <span id="expressionTypeLabel">Type</span>
+                    <select id="expressionTypeInput" name="expression_type"></select>
                 </label>
                 <label class="field">
                     <span>Pronunciation</span>
@@ -139,6 +153,23 @@
                 <label class="field">
                     <span>Bahasa Indonesia</span>
                     <textarea id="meaningIdInput" name="meaning_id" rows="3"></textarea>
+                </label>
+                <label class="field span-2" id="structureField" hidden>
+                    <span>Pattern</span>
+                    <input id="structureInput" name="structure" type="text" maxlength="500" placeholder="e.g. Would you mind + verb-ing?">
+                </label>
+                <label class="field span-2" id="usageContextField" hidden>
+                    <span>When to use</span>
+                    <textarea id="usageContextInput" name="usage_context" rows="2"></textarea>
+                </label>
+                <label class="field" id="registerField" hidden>
+                    <span>Register</span>
+                    <select id="registerInput" name="register_level">
+                        <option value="">Select...</option>
+                        <option>Neutral</option>
+                        <option>Formal</option>
+                        <option>Informal</option>
+                    </select>
                 </label>
                 <label class="field">
                     <span>Learning status</span>
@@ -167,10 +198,12 @@
                 <div id="examplesEditor"></div>
             </div>
 
+            </fieldset>
+
             <p class="form-message" id="formMessage" role="alert"></p>
             <div class="dialog-actions">
                 <button class="secondary-button" id="cancelDialogButton" type="button">Cancel</button>
-                <button class="primary-button" id="saveWordButton" type="submit">Save word</button>
+                <button class="primary-button" id="saveEntryButton" type="submit">Save word</button>
             </div>
         </form>
     </dialog>
@@ -179,7 +212,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.js" integrity="sha384-iLddHTLokph6Omwoyid4XKxHaWa6w41BnoEj0q5oOrzmYPpHIKt1wyjReA7s//pP" crossorigin="anonymous"></script>
     <script src="js/config.js"></script>
-    <script src="js/auth.js?v=20260913-2"></script>
-    <script src="js/dictionary.js?v=20260913-2"></script>
+    <script src="js/auth.js?v=20260913-3"></script>
+    <script src="js/dictionary.js?v=20260913-3"></script>
 </body>
 </html>

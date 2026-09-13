@@ -1,372 +1,467 @@
 (function () {
     "use strict";
 
-    const state = {
-        words: [],
-        selectedId: null,
-        activeFilter: "all",
-        searchText: "",
-        editingId: null,
-        user: null
+    const modules = {
+        chunks: {
+            title: "Chunks", singular: "chunk", maxLength: 500, placeholder: "e.g. Would you mind…?",
+            typeLabel: "Chunk type", types: ["Collocation", "Sentence starter", "Sentence frame", "Fixed expression"],
+            contextPlaceholder: "e.g. Making a polite request", icon: "…"
+        },
+        words: {
+            title: "Words", singular: "word", maxLength: 120, placeholder: "e.g. cumbersome", icon: "Aa"
+        },
+        phrases: {
+            title: "Phrases", singular: "phrase", maxLength: 500, placeholder: "e.g. on the same page",
+            typeLabel: "Phrase type", types: ["Idiom", "Phrasal verb", "Everyday expression", "Saying / proverb"],
+            contextPlaceholder: "e.g. Checking that everyone has the same understanding", icon: "“ ”"
+        }
     };
-
+    const state = {
+        entries: [], module: "words", selectedId: null, activeFilter: "all", searchText: "",
+        editingId: null, user: null, loaded: false, loading: false, saving: false, pendingIds: new Set()
+    };
     const elements = {};
+    const sameId = (a, b) => String(a) === String(b);
+    const currentModule = () => modules[state.module];
+    const moduleEntries = () => state.entries.filter((entry) => entry.module === state.module);
 
     document.addEventListener("DOMContentLoaded", initialize);
 
     async function initialize() {
         cacheElements();
         bindEvents();
-
+        setModule(moduleFromHash());
         const auth = await window.DictionaryAuth.requireAuth();
         if (!auth) return;
-
         state.user = auth.user;
         elements.userEmail.textContent = auth.user.email;
         elements.userEmail.title = auth.user.email;
-        await loadWords();
-        elements.addWordButton.disabled = false;
-
-        state.selectedId = state.words[0]?.id ?? null;
-        render();
+        await loadEntries();
     }
 
     function cacheElements() {
         [
-            "wordList", "wordDetail", "searchInput", "mobileFilterSelect", "listTitle",
-            "resultCount", "countAll", "countFavorite", "countNew", "countLearning",
-            "countMastered", "countFamiliar", "userEmail", "dictionaryLayout", "addWordButton", "wordDialog",
-            "wordForm", "dialogTitle", "closeDialogButton", "cancelDialogButton", "saveWordButton",
-            "formMessage", "wordInput", "partOfSpeechInput", "pronunciationInput", "meaningEnInput",
-            "meaningIdInput", "masteryInput", "favoriteInput", "notesInput", "examplesEditor",
-            "addExampleButton", "logoutButton", "mobileLogoutButton", "toast"
+            "entryList", "entryDetail", "searchInput", "mobileFilterSelect", "listTitle", "resultCount",
+            "countAll", "countFavorite", "countNew", "countLearning", "countMastered", "countFamiliar",
+            "userEmail", "dictionaryLayout", "addEntryButton", "addEntryLabel", "entryDialog", "entryForm",
+            "entryFields", "dialogTitle", "closeDialogButton", "cancelDialogButton", "saveEntryButton",
+            "formMessage", "entryInput", "entryInputLabel", "partOfSpeechInput", "partOfSpeechField",
+            "pronunciationInput", "meaningEnInput", "meaningIdInput", "masteryInput", "favoriteInput",
+            "notesInput", "examplesEditor", "addExampleButton", "logoutButton", "mobileLogoutButton", "toast",
+            "moduleTitle", "allFilterLabel", "allFilterOption", "searchLabel", "expressionTypeField",
+            "expressionTypeLabel", "expressionTypeInput", "structureField", "structureInput",
+            "usageContextField", "usageContextInput", "registerField", "registerInput"
         ].forEach((id) => { elements[id] = document.getElementById(id); });
     }
 
     function bindEvents() {
+        window.addEventListener("hashchange", () => {
+            if (state.saving || (elements.entryDialog.open && !window.confirm("Discard unsaved changes?"))) {
+                window.history.replaceState(null, "", `#${state.module}`);
+                return;
+            }
+            if (elements.entryDialog.open) closeEntryDialog();
+            setModule(moduleFromHash());
+        });
         elements.searchInput.addEventListener("input", (event) => {
             state.searchText = event.target.value.trim().toLowerCase();
-            const visibleWords = getVisibleWords();
-            if (!visibleWords.some((word) => String(word.id) === String(state.selectedId))) {
-                state.selectedId = visibleWords[0]?.id ?? null;
-            }
+            refreshSelection();
             elements.dictionaryLayout.classList.remove("show-detail");
             render();
         });
-
         document.querySelectorAll("[data-filter]").forEach((button) => {
             button.addEventListener("click", () => setFilter(button.dataset.filter));
         });
-
         elements.mobileFilterSelect.addEventListener("change", (event) => setFilter(event.target.value));
-        elements.addWordButton.addEventListener("click", () => openWordDialog());
-        elements.closeDialogButton.addEventListener("click", closeWordDialog);
-        elements.cancelDialogButton.addEventListener("click", closeWordDialog);
+        elements.addEntryButton.addEventListener("click", () => openEntryDialog());
+        elements.closeDialogButton.addEventListener("click", closeEntryDialog);
+        elements.cancelDialogButton.addEventListener("click", closeEntryDialog);
         elements.addExampleButton.addEventListener("click", () => addExampleEditor());
-        elements.wordForm.addEventListener("submit", saveWord);
+        elements.entryForm.addEventListener("submit", saveEntry);
         elements.logoutButton.addEventListener("click", window.DictionaryAuth.signOut);
         elements.mobileLogoutButton.addEventListener("click", window.DictionaryAuth.signOut);
-
-        elements.wordDialog.addEventListener("click", (event) => {
-            if (event.target === elements.wordDialog) closeWordDialog();
+        elements.entryDialog.addEventListener("cancel", (event) => {
+            if (state.saving) event.preventDefault();
+        });
+        elements.entryDialog.addEventListener("close", () => { state.editingId = null; });
+        elements.entryDialog.addEventListener("click", (event) => {
+            if (event.target === elements.entryDialog) closeEntryDialog();
         });
     }
 
-    async function loadWords() {
-        setListLoading();
-        const { data, error } = await window.DictionaryAuth.client
-            .from("words")
-            .select("*, word_examples(id, sentence, translation, notes, created_at)")
-            .eq("user_id", state.user.id)
-            .order("word", { ascending: true });
-
-        if (error) {
-            showToast(error.message, true);
-            state.words = [];
-            return;
-        }
-
-        state.words = (data || []).map((word) => ({
-            ...word,
-            word_examples: (word.word_examples || []).sort((a, b) => a.id - b.id)
-        }));
+    function moduleFromHash() {
+        const name = window.location.hash.slice(1);
+        return Object.hasOwn(modules, name) ? name : "words";
     }
 
-    function setListLoading() {
-        elements.wordList.innerHTML = '<div class="loading-state">Loading your words...</div>';
+    function setModule(name) {
+        state.module = name;
+        state.activeFilter = "all";
+        state.searchText = "";
+        state.selectedId = null;
+        elements.searchInput.value = "";
+        elements.dictionaryLayout.classList.remove("show-detail");
+        const config = currentModule();
+        elements.moduleTitle.textContent = config.title;
+        document.title = `${config.title} | My Dictionary`;
+        elements.addEntryLabel.textContent = `Add ${config.singular}`;
+        elements.allFilterLabel.textContent = `All ${name}`;
+        elements.allFilterOption.textContent = `All ${name}`;
+        elements.searchLabel.textContent = `Search ${name}`;
+        elements.searchInput.placeholder = `Search ${name} or meanings`;
+        document.querySelectorAll("[data-module]").forEach((link) => {
+            const active = link.dataset.module === name;
+            link.classList.toggle("active", active);
+            if (active) link.setAttribute("aria-current", "page");
+            else link.removeAttribute("aria-current");
+        });
+        refreshSelection();
+        render();
+    }
+
+    async function loadEntries() {
+        if (state.loading) return;
+        state.loading = true;
+        state.loaded = false;
+        render();
+        try {
+            const entries = [];
+            const pageSize = 500;
+            for (let offset = 0; ; offset += pageSize) {
+                const { data, error } = await window.DictionaryAuth.client
+                    .from("words")
+                    .select("*, word_examples(id, sentence, translation, notes, created_at)")
+                    .eq("user_id", state.user.id)
+                    .order("id", { ascending: true })
+                    .range(offset, offset + pageSize - 1);
+                if (error) throw error;
+                entries.push(...(data || []));
+                if (!data || data.length < pageSize) break;
+            }
+            state.entries = entries.map(normalizeEntry);
+            sortEntries();
+            state.loaded = true;
+            refreshSelection();
+        } catch (error) {
+            showToast(error.message || "Unable to load your entries.", true);
+        } finally {
+            state.loading = false;
+            render();
+        }
+    }
+
+    function normalizeEntry(entry) {
+        return {
+            ...entry,
+            module: entry.module || "words",
+            word_examples: [...(entry.word_examples || [])].sort((a, b) => a.id - b.id)
+        };
+    }
+
+    function sortEntries() {
+        state.entries.sort((a, b) => a.word.localeCompare(b.word, "en", { sensitivity: "base" }) || a.id - b.id);
     }
 
     function setFilter(filter) {
         state.activeFilter = filter;
+        refreshSelection();
         elements.dictionaryLayout.classList.remove("show-detail");
-        elements.mobileFilterSelect.value = filter;
-        document.querySelectorAll("[data-filter]").forEach((button) => {
-            button.classList.toggle("active", button.dataset.filter === filter);
-        });
-        const visibleWords = getVisibleWords();
-        if (!visibleWords.some((word) => String(word.id) === String(state.selectedId))) {
-            state.selectedId = visibleWords[0]?.id ?? null;
-        }
         render();
     }
 
-    function getVisibleWords() {
-        return state.words.filter((item) => {
+    function visibleEntries() {
+        return moduleEntries().filter((entry) => {
             const matchesFilter = state.activeFilter === "all"
-                || (state.activeFilter === "favorite" && item.favorite)
-                || item.mastery_level === state.activeFilter;
-            const searchable = [item.word, item.meaning_en, item.meaning_id, item.notes, item.part_of_speech]
-                .filter(Boolean)
-                .join(" ")
-                .toLowerCase();
+                || (state.activeFilter === "favorite" && entry.favorite)
+                || entry.mastery_level === state.activeFilter;
+            const searchable = [entry.word, entry.meaning_en, entry.meaning_id, entry.notes,
+                entry.part_of_speech, entry.expression_type, entry.structure, entry.usage_context,
+                entry.register_level, ...entry.word_examples.flatMap((example) => [example.sentence, example.translation])]
+                .filter(Boolean).join(" ").toLowerCase();
             return matchesFilter && (!state.searchText || searchable.includes(state.searchText));
         });
     }
 
+    function refreshSelection() {
+        const entries = visibleEntries();
+        if (!entries.some((entry) => sameId(entry.id, state.selectedId))) state.selectedId = entries[0]?.id ?? null;
+    }
+
     function render() {
+        elements.addEntryButton.disabled = !state.loaded;
+        elements.dictionaryLayout.setAttribute("aria-busy", String(state.loading));
+        elements.mobileFilterSelect.value = state.activeFilter;
+        document.querySelectorAll("[data-filter]").forEach((button) => {
+            button.classList.toggle("active", button.dataset.filter === state.activeFilter);
+        });
         renderCounts();
         renderList();
         renderDetail();
     }
 
     function renderCounts() {
-        elements.countAll.textContent = state.words.length;
-        elements.countFavorite.textContent = state.words.filter((item) => item.favorite).length;
-        elements.countNew.textContent = state.words.filter((item) => item.mastery_level === "New").length;
-        elements.countLearning.textContent = state.words.filter((item) => item.mastery_level === "Learning").length;
-        elements.countFamiliar.textContent = state.words.filter((item) => item.mastery_level === "Familiar").length;
-        elements.countMastered.textContent = state.words.filter((item) => item.mastery_level === "Mastered").length;
+        const entries = moduleEntries();
+        elements.countAll.textContent = entries.length;
+        elements.countFavorite.textContent = entries.filter((entry) => entry.favorite).length;
+        ["New", "Learning", "Familiar", "Mastered"].forEach((status) => {
+            elements[`count${status}`].textContent = entries.filter((entry) => entry.mastery_level === status).length;
+        });
+        document.querySelectorAll("[data-module-count]").forEach((count) => {
+            count.textContent = state.entries.filter((entry) => entry.module === count.dataset.moduleCount).length;
+        });
     }
 
     function renderList() {
-        const visibleWords = getVisibleWords();
-        const labels = { all: "All words", favorite: "Favorites", New: "New", Learning: "Learning", Familiar: "Familiar", Mastered: "Mastered" };
-        elements.listTitle.textContent = labels[state.activeFilter] || state.activeFilter;
-        elements.resultCount.textContent = `${visibleWords.length} ${visibleWords.length === 1 ? "word" : "words"}`;
-
-        if (!visibleWords.length) {
-            elements.wordList.innerHTML = `
-                <div class="empty-list">
-                    <span>Aa</span>
-                    <h3>${state.words.length ? "No matches" : "No words yet"}</h3>
-                    <p>${state.words.length ? "Try another search or filter." : "Add your first word."}</p>
-                </div>`;
+        const entries = visibleEntries();
+        const config = currentModule();
+        elements.listTitle.textContent = state.activeFilter === "all" ? `All ${state.module}`
+            : state.activeFilter === "favorite" ? "Favorites" : state.activeFilter;
+        elements.resultCount.textContent = `${entries.length} ${entries.length === 1 ? config.singular : state.module}`;
+        if (state.loading || !state.user) {
+            elements.entryList.innerHTML = '<div class="loading-state">Loading…</div>';
             return;
         }
-
-        elements.wordList.innerHTML = visibleWords.map((item) => `
-            <button class="word-card ${item.id === state.selectedId ? "selected" : ""}" type="button" data-word-id="${escapeHtml(item.id)}" aria-pressed="${item.id === state.selectedId}">
-                <span class="word-card-top">
-                    <span class="word-title">${escapeHtml(item.word)}</span>
-                    ${item.favorite ? '<span class="favorite-star" aria-label="Favorite">★</span>' : ""}
+        if (!state.loaded) {
+            elements.entryList.innerHTML = '<div class="empty-list"><h3>Unable to load your entries</h3><button class="secondary-button" id="retryButton" type="button">Try again</button></div>';
+            document.getElementById("retryButton").addEventListener("click", loadEntries);
+            return;
+        }
+        if (!entries.length) {
+            const hasEntries = moduleEntries().length > 0;
+            elements.entryList.innerHTML = `<div class="empty-list"><span>${config.icon}</span>
+                <h3>${hasEntries ? "No matches" : `No ${state.module} yet`}</h3>
+                <p>${hasEntries ? "Try another search or filter." : `Add your first ${config.singular}.`}</p></div>`;
+            return;
+        }
+        elements.entryList.innerHTML = entries.map((entry) => `
+            <button class="entry-card ${sameId(entry.id, state.selectedId) ? "selected" : ""}" type="button" data-entry-id="${escapeHtml(entry.id)}" aria-pressed="${sameId(entry.id, state.selectedId)}">
+                <span class="entry-card-top"><span class="entry-title">${escapeHtml(entry.word)}</span>
+                    ${entry.favorite ? '<span class="favorite-star" aria-label="Favorite">★</span>' : ""}</span>
+                <span class="entry-meta">
+                    ${entry.part_of_speech || entry.expression_type ? `<span>${escapeHtml(entry.part_of_speech || entry.expression_type)}</span>` : ""}
+                    <span class="status-badge status-${slug(entry.mastery_level)}">${escapeHtml(entry.mastery_level || "New")}</span>
                 </span>
-                <span class="word-meta">
-                    ${item.part_of_speech ? `<span>${escapeHtml(item.part_of_speech)}</span>` : ""}
-                    <span class="status-badge status-${slug(item.mastery_level)}">${escapeHtml(item.mastery_level || "New")}</span>
-                </span>
-                <span class="word-meaning">${escapeHtml(item.meaning_id || item.meaning_en)}</span>
+                <span class="entry-meaning">${escapeHtml(entry.meaning_id || entry.meaning_en)}</span>
             </button>`).join("");
-
-        elements.wordList.querySelectorAll("[data-word-id]").forEach((button) => {
+        elements.entryList.querySelectorAll("[data-entry-id]").forEach((button) => {
             button.addEventListener("click", () => {
-                state.selectedId = Number(button.dataset.wordId);
+                state.selectedId = button.dataset.entryId;
                 render();
                 elements.dictionaryLayout.classList.add("show-detail");
             });
         });
     }
 
+    function textSection(label, value, className = "note-card") {
+        return value ? `<section class="${className}"><p class="detail-label">${label}</p><p>${escapeHtml(value)}</p></section>` : "";
+    }
+
     function renderDetail() {
-        const item = state.words.find((word) => String(word.id) === String(state.selectedId));
-        if (!item) {
-            elements.wordDetail.innerHTML = `
-                <div class="empty-state">
-                    <span class="empty-icon">Aa</span>
-                    <h2>Select a word</h2>
-                </div>`;
+        const entry = state.loaded && visibleEntries().find((item) => sameId(item.id, state.selectedId));
+        if (!entry) {
+            elements.entryDetail.innerHTML = `<div class="empty-state"><span class="empty-icon">${currentModule().icon}</span><h2>Select a ${currentModule().singular}</h2></div>`;
             return;
         }
-
-        const examples = item.word_examples || [];
-        elements.wordDetail.innerHTML = `
+        const disabled = state.pendingIds.has(String(entry.id)) ? "disabled" : "";
+        const tags = [entry.part_of_speech, entry.expression_type, entry.register_level].filter(Boolean);
+        elements.entryDetail.innerHTML = `
             <article class="detail-content">
                 <div class="detail-actions">
-                    <button class="text-button mobile-back" id="backToWordsButton" type="button">← Words</button>
-                    <button class="icon-button favorite-action ${item.favorite ? "active" : ""}" id="favoriteButton" type="button" aria-label="Favorite" aria-pressed="${item.favorite}">★</button>
-                    <button class="secondary-button small" id="editButton" type="button">Edit</button>
-                    <button class="danger-button small" id="deleteButton" type="button">Delete</button>
+                    <button class="text-button mobile-back" id="backToEntriesButton" type="button">← ${currentModule().title}</button>
+                    <button class="icon-button favorite-action ${entry.favorite ? "active" : ""}" id="favoriteButton" type="button" aria-label="Favorite" aria-pressed="${entry.favorite}" ${disabled}>★</button>
+                    <button class="secondary-button small" id="editButton" type="button" ${disabled}>Edit</button>
+                    <button class="danger-button small" id="deleteButton" type="button" ${disabled}>Delete</button>
                 </div>
                 <header class="detail-header">
-                    <div class="detail-title-row">
-                        <h2>${escapeHtml(item.word)}</h2>
-                        <span class="status-badge status-${slug(item.mastery_level)}">${escapeHtml(item.mastery_level || "New")}</span>
-                    </div>
-                    ${item.pronunciation ? `<p class="pronunciation">${escapeHtml(item.pronunciation)}</p>` : ""}
-                    ${item.part_of_speech ? `<span class="part-label">${escapeHtml(item.part_of_speech)}</span>` : ""}
+                    <div class="detail-title-row"><h2>${escapeHtml(entry.word)}</h2>
+                        <span class="status-badge status-${slug(entry.mastery_level)}">${escapeHtml(entry.mastery_level || "New")}</span></div>
+                    ${entry.pronunciation ? `<p class="pronunciation">${escapeHtml(entry.pronunciation)}</p>` : ""}
+                    ${tags.length ? `<div class="detail-tags">${tags.map((tag) => `<span class="part-label">${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
                 </header>
-                <section class="meaning-block">
-                    <p class="detail-label">English meaning</p>
-                    <p>${escapeHtml(item.meaning_en)}</p>
-                </section>
-                ${item.meaning_id ? `
-                    <section class="meaning-block translated">
-                        <p class="detail-label">Bahasa Indonesia</p>
-                        <p>${escapeHtml(item.meaning_id)}</p>
-                    </section>` : ""}
-                ${examples.length ? `
-                    <section>
-                        <p class="detail-label">Examples</p>
-                        ${examples.map((example) => `
-                        <blockquote class="example-card">
-                            <p>${escapeHtml(example.sentence)}</p>
-                            ${example.translation ? `<footer>${escapeHtml(example.translation)}</footer>` : ""}
-                        </blockquote>`).join("")}
-                    </section>` : ""}
-                ${item.notes ? `
-                    <section class="note-card">
-                        <p class="detail-label">Notes</p>
-                        <p>${escapeHtml(item.notes)}</p>
-                    </section>` : ""}
+                ${textSection("English meaning", entry.meaning_en, "meaning-block")}
+                ${textSection("Bahasa Indonesia", entry.meaning_id, "meaning-block translated")}
+                ${textSection("Pattern", entry.structure, "pattern-card")}
+                ${textSection("When to use", entry.usage_context)}
+                ${entry.word_examples.length ? `<section><p class="detail-label">Examples</p>
+                    ${entry.word_examples.map((example) => `<blockquote class="example-card"><p>${escapeHtml(example.sentence)}</p>
+                        ${example.translation ? `<footer>${escapeHtml(example.translation)}</footer>` : ""}</blockquote>`).join("")}</section>` : ""}
+                ${textSection("Notes", entry.notes)}
             </article>`;
-
-        document.getElementById("backToWordsButton").addEventListener("click", () => {
+        document.getElementById("backToEntriesButton").addEventListener("click", () => {
             elements.dictionaryLayout.classList.remove("show-detail");
-            elements.wordList.querySelector(".word-card.selected")?.focus();
+            elements.entryList.querySelector(".entry-card.selected")?.focus();
         });
-        document.getElementById("editButton").addEventListener("click", () => openWordDialog(item));
-        document.getElementById("deleteButton").addEventListener("click", () => deleteWord(item));
-        document.getElementById("favoriteButton").addEventListener("click", () => toggleFavorite(item));
+        document.getElementById("editButton").addEventListener("click", () => openEntryDialog(entry));
+        document.getElementById("deleteButton").addEventListener("click", () => deleteEntry(entry));
+        document.getElementById("favoriteButton").addEventListener("click", () => toggleFavorite(entry));
     }
 
-    function openWordDialog(item = null) {
-        state.editingId = item?.id ?? null;
-        elements.wordForm.reset();
+    function openEntryDialog(entry = null) {
+        if (!state.loaded) return;
+        const config = currentModule();
+        state.editingId = entry?.id ?? null;
+        elements.entryForm.reset();
+        elements.entryFields.disabled = false;
         elements.examplesEditor.innerHTML = "";
         elements.formMessage.textContent = "";
-        elements.dialogTitle.textContent = item ? "Edit word" : "Add word";
-        elements.saveWordButton.textContent = item ? "Save changes" : "Save word";
-
-        if (item) {
-            elements.wordInput.value = item.word || "";
-            elements.partOfSpeechInput.value = item.part_of_speech || "";
-            elements.pronunciationInput.value = item.pronunciation || "";
-            elements.meaningEnInput.value = item.meaning_en || "";
-            elements.meaningIdInput.value = item.meaning_id || "";
-            elements.masteryInput.value = item.mastery_level || "New";
-            elements.favoriteInput.checked = Boolean(item.favorite);
-            elements.notesInput.value = item.notes || "";
-            (item.word_examples || []).forEach(addExampleEditor);
+        elements.dialogTitle.textContent = `${entry ? "Edit" : "Add"} ${config.singular}`;
+        elements.saveEntryButton.textContent = entry ? "Save changes" : `Save ${config.singular}`;
+        elements.entryInputLabel.textContent = `${config.singular[0].toUpperCase() + config.singular.slice(1)} *`;
+        elements.entryInput.maxLength = config.maxLength;
+        elements.entryInput.placeholder = config.placeholder;
+        elements.pronunciationInput.placeholder = state.module === "words" ? "e.g. /ˈkʌmbəsəm/" : "";
+        elements.expressionTypeLabel.textContent = config.typeLabel || "Type";
+        elements.expressionTypeInput.innerHTML = '<option value="">Select...</option>'
+            + (config.types || []).map((type) => `<option>${escapeHtml(type)}</option>`).join("");
+        elements.usageContextInput.placeholder = config.contextPlaceholder || "";
+        [
+            ["partOfSpeech", state.module === "words"], ["expressionType", state.module !== "words"],
+            ["structure", state.module === "chunks"], ["usageContext", state.module !== "words"],
+            ["register", state.module === "phrases"]
+        ].forEach(([name, visible]) => {
+            elements[`${name}Field`].hidden = !visible;
+            elements[`${name}Input`].disabled = !visible;
+        });
+        if (entry) {
+            elements.entryInput.value = entry.word || "";
+            if (entry.part_of_speech && ![...elements.partOfSpeechInput.options].some((option) => option.value === entry.part_of_speech)) {
+                const option = document.createElement("option");
+                option.textContent = entry.part_of_speech;
+                elements.partOfSpeechInput.appendChild(option);
+            }
+            const fields = { partOfSpeech: "part_of_speech", pronunciation: "pronunciation", meaningEn: "meaning_en",
+                meaningId: "meaning_id", notes: "notes", expressionType: "expression_type", structure: "structure",
+                usageContext: "usage_context", register: "register_level" };
+            Object.entries(fields).forEach(([input, key]) => { elements[`${input}Input`].value = entry[key] || ""; });
+            elements.masteryInput.value = entry.mastery_level || "New";
+            elements.favoriteInput.checked = Boolean(entry.favorite);
+            entry.word_examples.forEach(addExampleEditor);
         }
-
         if (!elements.examplesEditor.children.length) addExampleEditor();
-        elements.wordDialog.showModal();
-        elements.wordInput.focus();
+        elements.entryDialog.showModal();
+        elements.entryInput.focus();
     }
 
-    function closeWordDialog() {
-        elements.wordDialog.close();
+    function closeEntryDialog() {
+        if (state.saving) return;
+        elements.entryDialog.close();
         state.editingId = null;
     }
 
     function addExampleEditor(example = {}) {
         const row = document.createElement("div");
         row.className = "example-editor";
+        if (example.notes) row.dataset.notes = example.notes;
         row.innerHTML = `
-            <label class="field">
-                <span>Example sentence</span>
-                <textarea class="example-sentence" rows="2">${escapeHtml(example.sentence || "")}</textarea>
-            </label>
-            <label class="field">
-                <span>Indonesian translation</span>
-                <textarea class="example-translation" rows="2">${escapeHtml(example.translation || "")}</textarea>
-            </label>
+            <label class="field"><span>Example sentence</span><textarea class="example-sentence" rows="2">${escapeHtml(example.sentence || "")}</textarea></label>
+            <label class="field"><span>Indonesian translation</span><textarea class="example-translation" rows="2">${escapeHtml(example.translation || "")}</textarea></label>
             <button class="icon-button remove-example" type="button" aria-label="Remove this example">&times;</button>`;
         row.querySelector(".remove-example").addEventListener("click", () => row.remove());
         elements.examplesEditor.appendChild(row);
     }
 
-    async function saveWord(event) {
+    async function saveEntry(event) {
         event.preventDefault();
-        const wasEditing = Boolean(state.editingId);
-        elements.formMessage.textContent = "";
-        elements.saveWordButton.disabled = true;
-        elements.saveWordButton.textContent = "Saving...";
-
-        const wordRecord = {
-            word: elements.wordInput.value.trim(),
-            part_of_speech: elements.partOfSpeechInput.value || null,
-            pronunciation: elements.pronunciationInput.value.trim() || null,
-            meaning_en: elements.meaningEnInput.value.trim(),
-            meaning_id: elements.meaningIdInput.value.trim() || null,
-            mastery_level: elements.masteryInput.value,
-            favorite: elements.favoriteInput.checked,
-            notes: elements.notesInput.value.trim() || null
+        if (state.saving) return;
+        const wasEditing = state.editingId !== null;
+        const config = currentModule();
+        const value = (name) => elements[`${name}Input`].value.trim() || null;
+        const record = {
+            word: value("entry"), part_of_speech: state.module === "words" ? value("partOfSpeech") : null,
+            pronunciation: value("pronunciation"), meaning_en: value("meaningEn"), meaning_id: value("meaningId"),
+            mastery_level: value("mastery"), favorite: elements.favoriteInput.checked, notes: value("notes"),
+            expression_type: state.module !== "words" ? value("expressionType") : null,
+            structure: state.module === "chunks" ? value("structure") : null,
+            usage_context: state.module !== "words" ? value("usageContext") : null,
+            register_level: state.module === "phrases" ? value("register") : null
         };
-        const examples = [...elements.examplesEditor.querySelectorAll(".example-editor")]
-            .map((row) => ({
-                sentence: row.querySelector(".example-sentence").value.trim(),
-                translation: row.querySelector(".example-translation").value.trim() || null
-            }))
-            .filter((example) => example.sentence);
-
+        const examples = [...elements.examplesEditor.querySelectorAll(".example-editor")].map((row) => ({
+            sentence: row.querySelector(".example-sentence").value.trim(),
+            translation: row.querySelector(".example-translation").value.trim() || null,
+            notes: row.dataset.notes || null
+        })).filter((example) => example.sentence);
+        elements.formMessage.textContent = "";
+        state.saving = true;
+        setFormBusy(true);
+        let saved = false;
         try {
-            if (!wordRecord.word || !wordRecord.meaning_en) {
-                throw new Error("Please enter a word and its English meaning.");
-            }
-            await saveDatabaseWord(wordRecord, examples);
-            await loadWords();
-            closeWordDialog();
-            render();
-            elements.dictionaryLayout.classList.add("show-detail");
-            showToast(wasEditing ? "Word updated." : "Word saved.");
+            if (!record.word || !record.meaning_en) throw new Error(`Please enter a ${config.singular} and its English meaning.`);
+            const { data, error } = await window.DictionaryAuth.client.rpc("save_entry", {
+                p_module: state.module, p_entry_id: state.editingId, p_entry: record, p_examples: examples
+            });
+            if (error) throw error;
+            const entry = normalizeEntry(data);
+            state.entries = state.entries.filter((item) => !sameId(item.id, entry.id));
+            state.entries.push(entry);
+            sortEntries();
+            state.selectedId = entry.id;
+            state.activeFilter = "all";
+            state.searchText = "";
+            elements.searchInput.value = "";
+            saved = true;
         } catch (error) {
             elements.formMessage.textContent = error.code === "23505"
-                ? "This word is already in your dictionary. Edit the existing entry."
-                : error.message || "The word could not be saved.";
+                ? `This ${config.singular} already exists in ${config.title}. Edit the existing entry.`
+                : error.message || "Unable to save. Please try again.";
         } finally {
-            elements.saveWordButton.disabled = false;
-            elements.saveWordButton.textContent = state.editingId ? "Save changes" : "Save word";
+            state.saving = false;
+            setFormBusy(false);
+        }
+        if (saved) {
+            closeEntryDialog();
+            render();
+            elements.dictionaryLayout.classList.add("show-detail");
+            showToast(`${config.singular[0].toUpperCase() + config.singular.slice(1)} ${wasEditing ? "updated" : "saved"}.`);
         }
     }
 
-    async function saveDatabaseWord(record, examples) {
-        const { data, error } = await window.DictionaryAuth.client.rpc("save_word", {
-            p_word_id: state.editingId,
-            p_word: record,
-            p_examples: examples
-        });
-        if (error) throw error;
-        state.selectedId = data;
+    function setFormBusy(busy) {
+        elements.entryFields.disabled = busy;
+        elements.saveEntryButton.disabled = busy;
+        elements.closeDialogButton.disabled = busy;
+        elements.cancelDialogButton.disabled = busy;
+        elements.saveEntryButton.textContent = busy ? "Saving…" : state.editingId !== null ? "Save changes" : `Save ${currentModule().singular}`;
     }
 
-    async function toggleFavorite(item) {
-        const newValue = !item.favorite;
-        const { error } = await window.DictionaryAuth.client
-            .from("words")
-            .update({ favorite: newValue })
-            .eq("id", item.id);
-        if (error) {
-            showToast(error.message, true);
-            return;
+    async function toggleFavorite(entry) {
+        const id = String(entry.id);
+        if (state.pendingIds.has(id)) return;
+        state.pendingIds.add(id);
+        renderDetail();
+        try {
+            const { data, error } = await window.DictionaryAuth.client.from("words")
+                .update({ favorite: !entry.favorite }).eq("id", entry.id)
+                .eq("user_id", state.user.id).eq("module", entry.module).select("id, favorite").single();
+            if (error) throw error;
+            entry.favorite = data.favorite;
+            refreshSelection();
+        } catch (error) {
+            showToast(error.message || "Unable to update favorite.", true);
+        } finally {
+            state.pendingIds.delete(id);
+            render();
         }
-        item.favorite = newValue;
-        render();
     }
 
-    async function deleteWord(item) {
-        if (!window.confirm(`Delete “${item.word}”? This cannot be undone.`)) return;
-
-        const { error } = await window.DictionaryAuth.client.from("words").delete().eq("id", item.id);
-        if (error) {
-            showToast(error.message, true);
-            return;
+    async function deleteEntry(entry) {
+        const id = String(entry.id);
+        if (state.pendingIds.has(id) || !window.confirm(`Delete “${entry.word}”? This cannot be undone.`)) return;
+        state.pendingIds.add(id);
+        renderDetail();
+        try {
+            const { error } = await window.DictionaryAuth.client.from("words").delete()
+                .eq("id", entry.id).eq("user_id", state.user.id).eq("module", entry.module).select("id").single();
+            if (error) throw error;
+            state.entries = state.entries.filter((item) => !sameId(item.id, entry.id));
+            if (sameId(state.selectedId, entry.id)) elements.dictionaryLayout.classList.remove("show-detail");
+            refreshSelection();
+            showToast(`${modules[entry.module].singular[0].toUpperCase() + modules[entry.module].singular.slice(1)} deleted.`);
+        } catch (error) {
+            showToast(error.message || "Unable to delete this entry.", true);
+        } finally {
+            state.pendingIds.delete(id);
+            render();
         }
-
-        elements.dictionaryLayout.classList.remove("show-detail");
-        state.words = state.words.filter((word) => String(word.id) !== String(item.id));
-        state.selectedId = getVisibleWords()[0]?.id ?? state.words[0]?.id ?? null;
-        render();
-        showToast("Word deleted.");
     }
 
     function showToast(message, isError = false) {
@@ -374,7 +469,7 @@
         elements.toast.classList.toggle("error", isError);
         elements.toast.classList.add("visible");
         window.clearTimeout(showToast.timer);
-        showToast.timer = window.setTimeout(() => elements.toast.classList.remove("visible"), 3000);
+        showToast.timer = window.setTimeout(() => elements.toast.classList.remove("visible"), 3500);
     }
 
     function slug(value) {
@@ -382,11 +477,7 @@
     }
 
     function escapeHtml(value) {
-        return String(value ?? "")
-            .replaceAll("&", "&amp;")
-            .replaceAll("<", "&lt;")
-            .replaceAll(">", "&gt;")
-            .replaceAll('"', "&quot;")
-            .replaceAll("'", "&#039;");
+        return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
     }
 }());
